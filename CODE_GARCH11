@@ -1,0 +1,91 @@
+#code for GARCH(1,1) yen with visuals in python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
+
+# Load the data
+df = pd.read_csv('/Users/benhayat/Downloads/GARCH.csv')
+
+# Calculate returns
+df['Returns'] = df['Si'].pct_change()
+returns = df['Returns'].dropna().values
+
+# GARCH(1,1) log-likelihood function derivation in read text
+def garch_likelihood(params, data):
+    omega, alpha, beta = params
+    n = len(data)
+    var = np.zeros(n)
+    loglik = 0.0
+
+    # Initialize variance with the unconditional variance
+    var[0] = np.var(data)
+
+    for t in range(1, n):
+        var[t] = omega + alpha * data[t-1]**2 + beta * var[t-1]
+        loglik += np.log(var[t]) + (data[t]**2) / var[t]
+
+    return loglik
+
+# Constraints: omega > 0, alpha >= 0, beta >= 0, alpha + beta < 1, inequality returning function to be checked
+constraints = (
+    {'type': 'ineq', 'fun': lambda x: x[0]},                   # omega > 0
+    {'type': 'ineq', 'fun': lambda x: x[1]},                   # alpha >= 0
+    {'type': 'ineq', 'fun': lambda x: x[2]},                   # beta >= 0
+    {'type': 'ineq', 'fun': lambda x: 1 - x[1] - x[2]}         # alpha + beta < 1
+)
+
+# Initial guess
+initial_params = [10, 0.01, 0.01]
+
+# Minimize the negative log-likelihood the module does the work for us :)
+result = minimize(garch_likelihood, initial_params, args=(returns,), constraints=constraints)
+
+# Extract the fitted parameters
+omega, alpha, beta = result.x
+print(f"Estimated Parameters:\nomega = {omega:.6e}, alpha = {alpha:.4f}, beta = {beta:.4f}")
+
+# Estimate conditional variance using the fitted parameters
+n = len(returns)
+variance = np.zeros(n)
+variance[0] = np.var(returns)
+for t in range(1, n):
+    variance[t] = omega + alpha * returns[t-1]**2 + beta * variance[t-1]
+
+volatility = np.sqrt(variance) * 100  # convert to percentage
+
+# Drop NaNs to align with returns and volatility
+aligned_df = df.dropna().reset_index(drop=True)
+
+# Number of most recent data points to visualize
+n = 500
+
+# Slice the last n data points
+x_axis = np.arange(len(aligned_df))[-n:]
+last_50_prices = aligned_df['Si'].values[-n:]
+last_50_vol = volatility[-n:]
+
+# Create the plot
+fig, ax1 = plt.subplots(figsize=(12, 6))
+
+# Plot exchange rate on primary y-axis
+color = 'tab:blue'
+ax1.set_xlabel('Time')
+ax1.set_ylabel('Exchange Rate (Si)', color=color)
+ax1.plot(x_axis, last_50_prices, color=color, label='Exchange Rate')
+ax1.tick_params(axis='y', labelcolor=color)
+
+# Create secondary y-axis for volatility
+ax2 = ax1.twinx()
+color = 'tab:red'
+ax2.set_ylabel('Volatility (%)', color=color)
+ax2.plot(x_axis, last_50_vol, color=color, label='Volatility (%)')
+ax2.tick_params(axis='y', labelcolor=color)
+
+# Title and grid
+plt.title('Exchange Rate vs. Estimated GARCH(1,1) Volatility (Last '+str(n)+' Data Points)')
+fig.tight_layout()
+plt.grid(True)
+plt.show()
+
+
